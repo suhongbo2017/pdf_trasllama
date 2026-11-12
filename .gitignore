@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+secrets.json
+out/
+.cache/
+.tmp/
+samples/*.pdf
+samples/release_02_document_bundle/
