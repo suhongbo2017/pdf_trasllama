@@ -16,6 +16,7 @@
 | | **覆盖式 HTML**（原页做底图、译文按原位置贴回，最接近原件观感） |
 | | **译文 Markdown**（逐块中英对照） |
 | 单张截图 / 图片 | 同上（也可被浏览器扩展调用来做「截图翻译」） |
+| 多页 PDF | **拆分**成多个小文件（每页一个 / 每 N 页 / 自定义范围） |
 
 脚本、表格、印章、涂黑、手写批注都能处理；涂黑处输出 `[涂黑 (b)(6)]` 而不是猜内容。
 
@@ -65,6 +66,28 @@ start-server.cmd            :: 打开 http://127.0.0.1:8765/
 
 常用参数：`--pages` `--dpi` `--concurrency` `--target` `--provider` `--force`
 `--skip-done` `--no-original` `--only` `--dry-run` `--mock`
+
+### 拆分 PDF（不翻译，只拆）
+
+```bash
+# 每页一个文件（默认）
+.venv\Scripts\python.exe -m pdftranslate.split samples/xxx.pdf --each -o out/split
+
+# 每 5 页一个文件
+.venv\Scripts\python.exe -m pdftranslate.split samples/xxx.pdf --every 5
+
+# 自定义范围：第 1 页、第 3-4 页、第 10 页到末尾
+.venv\Scripts\python.exe -m pdftranslate.split samples/xxx.pdf --ranges 1,3-4,10-
+
+# 整个目录，每个文件拆到自己子目录
+.venv\Scripts\python.exe -m pdftranslate.split samples -o out/split --each
+```
+
+也可以在 Web 界面右侧「PDF 拆分」面板里操作（选文件 → 选方式 → 开始拆分 → 下载 zip）。
+
+- 用 `insert_pdf` 做页拷贝，**不重新光栅化**：拆分后画质与原文件一致
+- 多个输出自动打包 `<原名>_split.zip`
+- 范围写法容错：`1-99` 会裁剪到实际页数，`1-3,2-5` 自动合并，`abc` 这类无效片段忽略
 
 ---
 
@@ -129,7 +152,8 @@ GET  /api/config   模型列表与当前默认
 ## 测试
 
 ```bash
-# 冒烟测试：mock 管线 + 坐标归一化 + 表格 markdown（不联网、不花钱）
+# 冒烟测试 34 项：坐标归一化 / 表格结构 / CJK 断行 / 列宽 / 坐标质量 /
+# 模型注册表 / PDF 拆分 plan / 端到端 mock 管线（不联网、不花钱）
 .venv\Scripts\python.exe tests\smoke.py
 ```
 
@@ -153,6 +177,8 @@ pdftranslate/
   build_html.py  覆盖式 HTML（真表格、顺排降级）
   screen.py      截图翻译
   pipeline.py    CLI 与 Web UI 共用流水线
-  server.py      本地 Web 界面（:8765）+ /api/screen
+  server.py      本地 Web 界面（:8765）+ /api/screen + /api/split
+  split.py       PDF 拆分（页拷贝，无损）
+  split_cli.py   拆分命令行
   models.py      模型注册表（models.json / secrets.json）
 ```

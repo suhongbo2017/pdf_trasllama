@@ -74,13 +74,25 @@ check('default 指向存在的模型', registry.default_id() in {m.id for m in e
 check('public() 不泄露 key', all('api_key' not in m.public() for m in entries))
 check('能识别 key 是否存在', isinstance(entries[0].public().get('has_key'), bool))
 
-print('\n[6] 端到端（mock，不调 API）')
+print('\n[6] PDF 拆分')
+from pdftranslate.split import build_plan, parse_ranges, split_pdf  # noqa: E402
+
+check('范围解析 1-3,7,10-', parse_ranges('1-3,7,10-', 12) == [(1, 3), (7, 7), (10, 12)])
+check('范围自动裁剪越界', parse_ranges('1-99', 5) == [(1, 5)])
+check('重叠范围合并', parse_ranges('1-3,2-5', 10) == [(1, 5)])
+check('非法范围被忽略', parse_ranges('abc,,-1', 10) == [])
+check('每页一个 plan', build_plan(4, mode='each') == [(1, 1), (2, 2), (3, 3), (4, 4)])
+check('每 N 页 plan', build_plan(7, mode='every', every=3) == [(1, 3), (4, 6), (7, 7)])
+
+print('\n[7] 端到端（mock，不调 API）')
 with tempfile.TemporaryDirectory() as tmp:
     from pdftranslate.build import build_bilingual_pdf, write_markdown
     from pdftranslate.pipeline import Options, process_file
     from pdftranslate.render import count_pages
 
-    src = next(iter(sorted((ROOT / 'samples').rglob('*.pdf'))), None)
+    # 优先用固定目录里的样例，避免被 _uploads 里的临时文件抢走
+    cand = sorted((ROOT / 'samples' / 'release_02_document_bundle').glob('*.pdf'))
+    src = cand[0] if cand else next(iter(sorted((ROOT / 'samples').rglob('*.pdf'))), None)
     if src is None:
         check('样例 PDF 存在（跳过：samples/ 为空）', True)
     else:
@@ -99,7 +111,20 @@ with tempfile.TemporaryDirectory() as tmp:
         check('产出覆盖式 HTML', html.exists())
         if html.exists():
             text = html.read_text(encoding='utf-8')
-            check('HTML 含译文块', text.count('class="blk') > 0)
+            # mock 数据没有 bbox，页面会走"顺排降级"，所以两种形态都算通过
+            blocks = text.count('class="blk') + text.count('flow-item')
+            check('HTML 含译文内容', blocks > 0, f'块数 {blocks}')
+
+        # 拆分同一份文件
+        split_dir = out_dir / 'split'
+        res = split_pdf(src, split_dir, mode='each')
+        check('拆分产出页数正确', len(res.files) == pages, f'{len(res.files)}/{pages}')
+        check('拆分文件存在', all(f.exists() for f in res.files))
+        check('拆分生成 zip', bool(res.zip_path and res.zip_path.exists()))
+        import pymupdf as _pm
+
+        with _pm.open(res.files[0]) as part:
+            check('拆分后首份为 1 页', part.page_count == 1)
 
 print()
 if failures:

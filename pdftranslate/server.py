@@ -261,6 +261,62 @@ class Handler(BaseHTTPRequestHandler):
         route = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
+        if route == '/api/split':
+            payload = self._payload() if hasattr(self, '_payload') else None
+            if payload is None:
+                try:
+                    length = int(self.headers.get('Content-Length') or 0)
+                    payload = json.loads(self.rfile.read(length) or b'{}')
+                except json.JSONDecodeError:
+                    self._json({'ok': False, 'error': 'bad json'}, 400)
+                    return
+            name = (payload.get('name') or '').strip()
+            if not name:
+                self._json({'ok': False, 'error': '请选择一个 PDF'}, 400)
+                return
+            src = (self.input_dir / name).resolve()
+            if not src.exists() or self.input_dir.resolve() not in src.parents:
+                self._json({'ok': False, 'error': f'找不到文件：{name}'}, 404)
+                return
+            mode = payload.get('mode') or 'each'
+            out_dir = self.out_dir / '_split' / src.stem
+            try:
+                from .split import split_pdf
+
+                res = split_pdf(
+                    src,
+                    out_dir,
+                    mode=mode,
+                    every=int(payload.get('every') or 1),
+                    ranges=str(payload.get('ranges') or ''),
+                    make_zip=bool(payload.get('zip', True)),
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._json({'ok': False, 'error': str(exc)}, 200)
+                return
+            base = self.out_dir
+            self._json(
+                {
+                    'ok': True,
+                    'totalPages': res.total_pages,
+                    'count': len(res.files),
+                    'files': [
+                        {
+                            'name': f.name,
+                            'url': '/out/' + str(f.relative_to(base)).replace('\\', '/'),
+                            'pages': e - s0 + 1,
+                        }
+                        for (s0, e), f in zip(res.plan, res.files)
+                    ],
+                    'zip': (
+                        '/out/' + str(res.zip_path.relative_to(base)).replace('\\', '/')
+                        if res.zip_path
+                        else ''
+                    ),
+                }
+            )
+            return
+
         if route == '/api/screen':
             length = int(self.headers.get('Content-Length') or 0)
             try:
