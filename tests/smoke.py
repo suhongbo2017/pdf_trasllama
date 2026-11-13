@@ -98,7 +98,25 @@ check('切在末页不产生空文件', plan_from_cuts(parse_cuts('10', 10), 10)
 check('每页一个 plan', build_plan(4, mode='each') == [(1, 1), (2, 2), (3, 3), (4, 4)])
 check('每 N 页 plan', build_plan(7, mode='every', every=3) == [(1, 3), (4, 6), (7, 7)])
 
-print('\n[7] 端到端（mock，不调 API）')
+print('\n[7] 文本层路由')
+import pymupdf as _pm  # noqa: E402
+from pdftranslate import textlayer  # noqa: E402
+
+_cand = sorted((ROOT / 'samples' / 'release_02_document_bundle').glob('*.pdf'))
+if _cand:
+    with _pm.open(_cand[0]) as _doc:
+        _pages = [textlayer.inspect(_doc[i]) for i in range(_doc.page_count)]
+        check('扫描件默认不走文本路由', all(not p.usable for p in _pages),
+              str([p.reason[:24] for p in _pages][:2]))
+        check('强制 always 时可用', textlayer.inspect(_doc[0], prefer='always').usable)
+        check('强制 never 时不可用', not textlayer.inspect(_doc[0], prefer='never').usable)
+        _blocks = textlayer.extract_blocks(_doc[0])
+        check('抽取到文本块', len(_blocks) > 0, f'{len(_blocks)} 块')
+        check('块坐标已归一化', all(0 <= v <= 1 for b in _blocks for v in b['bbox']))
+check('中文判定', textlayer.looks_like_chinese('这是一段中文文本 with few words'))
+check('英文判定', not textlayer.looks_like_chinese('This is an English sentence.'))
+
+print('\n[8] 端到端（mock，不调 API）')
 with tempfile.TemporaryDirectory() as tmp:
     from pdftranslate.build import build_bilingual_pdf, write_markdown
     from pdftranslate.pipeline import Options, process_file

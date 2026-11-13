@@ -23,6 +23,8 @@ class Config:
     base_url: str = ''
     api_key: str = ''
     model: str = ''
+    # 纯文本翻译用的模型（文本层路由）；留空则复用视觉模型
+    text_model: str = ''
     target_lang: str = '简体中文'
     dpi: int = 250
     max_side: int = 2200
@@ -51,6 +53,7 @@ class Config:
             base_url=os.getenv('VISION_BASE_URL') or entry.base_url,
             api_key=entry.api_key,
             model=os.getenv('VISION_MODEL') or entry.model,
+            text_model=os.getenv('VISION_TEXT_MODEL') or '',
             proxy=proxy or '',
         )
         for key, value in overrides.items():

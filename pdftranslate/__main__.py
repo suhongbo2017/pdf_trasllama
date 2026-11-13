@@ -41,6 +41,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--only', choices=['pdf', 'md', 'html'], default=None, help='只输出一种格式')
     parser.add_argument('--dry-run', action='store_true', help='只列出将处理哪些文件、共多少页')
     parser.add_argument('--skip-done', action='store_true', help='跳过已有输出的文件')
+    parser.add_argument(
+        '--text-layer',
+        choices=['auto', 'always', 'never'],
+        default='auto',
+        help='文本层路由：auto=只有原生电子版走文本直译（默认，最稳）；'
+        'always=有文本层就直译（OCR 层也信）；never=一律用视觉模型',
+    )
     args = parser.parse_args(argv)
 
     inputs = collect_inputs(args.input)
@@ -94,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         force=args.force,
         skip_done=args.skip_done,
         no_original=args.no_original,
+        text_layer=args.text_layer,
     )
 
     started = time.time()

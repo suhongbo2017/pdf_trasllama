@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -12,7 +13,10 @@ from typing import Callable
 from .build import build_bilingual_pdf, write_markdown
 from .build_html import build_html, write_page_map
 from .config import Config
+from . import textlayer
 from .render import IMAGE_SUFFIXES, count_pages, is_image, load_page
+from .translate_text import translate_texts
+from .vision import Block, PageResult
 from .snap import page_lines, snap_blocks
 from .vision import PageResult, transcribe_page
 
@@ -30,6 +34,8 @@ class Options:
     force: bool = False
     skip_done: bool = False
     no_original: bool = False
+    # auto: 只有原生电子版走文本路由；always: 有文本层就用；never: 一律视觉模型
+    text_layer: str = 'auto'
 
 
 @dataclass
@@ -134,11 +140,68 @@ def process_file(
     cache_dir.mkdir(parents=True, exist_ok=True)
     done_count = 0
 
+    def run_text_layer(index: int) -> PageResult | None:
+        """文本层路由：直接抽文字 + 纯文本翻译，完全不调视觉模型。"""
+        if is_image(src):
+            return None
+        import pymupdf
+
+        with pymupdf.open(src) as doc:
+            page = doc[index - 1]
+            verdict = textlayer.inspect(page, prefer=opts.text_layer)
+            if not verdict.usable:
+                emit(f'第 {index}/{total_pages} 页 · 走视觉模型（{verdict.reason}）')
+                return None
+            blocks = textlayer.extract_blocks(page)
+        if not blocks:
+            emit(f'第 {index}/{total_pages} 页 · 文本层没有可用块，回退视觉模型')
+            return None
+
+        texts = [b['text'] for b in blocks]
+        # 源文本已经是目标语言（比如中文手册翻中文）就不用译。
+        # 按整页判断，避免"H3C Mini S1500FX 系列交换机"这类中英混排块被误判成英文。
+        joined = ' '.join(texts)
+        # 目标语言写法可能是 "简体中文" 或 "zh-CN"，两种都要认
+        target_is_zh = bool(re.search(r'zh|中文|Chinese', cfg.target_lang, re.I))
+        already_target = target_is_zh and (
+            len(textlayer._CJK.findall(joined)) > 2 * len(textlayer._LATIN_WORD.findall(joined))
+        )
+        if already_target:
+            translated = texts
+            note = '源文已是中文，跳过翻译'
+        else:
+            translated = translate_texts(texts, cfg)
+            note = '已翻译'
+
+        out_blocks = [
+            Block(
+                kind=textlayer.classify(b, 1.0),
+                original=b['text'],
+                translation=(translated[i] or b['text']),
+                bbox=b['bbox'],
+                bbox_source='text',
+            )
+            for i, b in enumerate(blocks)
+        ]
+        ok = sum(1 for t in translated if t)
+        emit(f'第 {index}/{total_pages} 页 · 文本层直译 {len(out_blocks)} 块（{note}，{ok} 块有译文）')
+        return PageResult(page=index, blocks=out_blocks, model='text-layer')
+
     def run(index: int) -> PageResult:
         nonlocal done_count
         cache_file = cache_dir / f'page-{index}.json'
         if cache_file.exists() and not opts.force and not cfg.mock:
             result = PageResult.from_dict(json.loads(cache_file.read_text(encoding='utf-8')))
+        elif cfg.mock:
+            page = load_page(src, index, dpi=cfg.dpi, max_side=cfg.max_side)
+            result = transcribe_page(
+                page.data_uri, index, cfg, image_size=(page.width, page.height)
+            )
+        elif (text_result := run_text_layer(index)) is not None:
+            result = text_result
+            cache_file.write_text(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=1), encoding='utf-8'
+            )
         else:
             page = load_page(src, index, dpi=cfg.dpi, max_side=cfg.max_side)
             result = transcribe_page(
