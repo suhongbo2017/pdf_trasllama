@@ -289,10 +289,19 @@
             <input type="number" id="splitEvery" value="5" min="1" max="200">
           </div>
           <div class="field" id="wrapRanges" style="display:none;grid-column:1/-1">
-            <label>页码范围</label>
-            <input type="text" id="splitRanges" placeholder="如 1-3,7,10-">
+            <label>页码范围 <span style="opacity:.6;font-weight:400">（用逗号分隔，每段产出一个文件）</span></label>
+            <input type="text" id="splitRanges" placeholder="例如 1-3,7,10-">
+            <div class="hint" style="line-height:1.9">
+              <b style="color:#c9d1de">1-3</b> → 第 1 到 3 页合成一个文件<br>
+              <b style="color:#c9d1de">7</b> → 只取第 7 页，单独一个文件<br>
+              <b style="color:#c9d1de">10-</b> → 第 10 页一直到最后，合成一个文件<br>
+              <b style="color:#c9d1de">-5</b> → 从第 1 页到第 5 页<br>
+              组合示例：<b style="color:#c9d1de">1-3,7,10-</b> → 产出 3 个文件
+              （p001-003、p007、p010-末页）
+            </div>
           </div>
         </div>
+        <div class="hint" id="splitPreview" style="min-height:16px;line-height:1.8"></div>
         <label class="switch"><input type="checkbox" id="splitZip" checked> 打包成 zip（多个文件时）</label>
         <div class="actions">
           <button class="btn primary" id="btnSplit">开始拆分</button>
@@ -728,6 +737,7 @@ document.querySelectorAll('#splitMode button').forEach((b) => {
     document.querySelectorAll('#splitMode button').forEach((x) => x.classList.toggle('active', x === b));
     document.getElementById('wrapEvery').style.display = splitMode === 'every' ? '' : 'none';
     document.getElementById('wrapRanges').style.display = splitMode === 'ranges' ? '' : 'none';
+    updateSplitPreview();
   };
 });
 
@@ -740,13 +750,100 @@ function refreshSplitFiles(files) {
   if (prev && files.some((f) => f.path === prev)) sel.value = prev;
   const cur = files.find((f) => f.path === sel.value);
   document.getElementById('splitPages').textContent = cur ? `共 ${cur.pages} 页` : '';
+  updateSplitPreview();
 }
 
 document.getElementById('splitFile').addEventListener('change', () => {
   const files = window.__filesCache || [];
   const cur = files.find((f) => f.path === document.getElementById('splitFile').value);
   document.getElementById('splitPages').textContent = cur ? `共 ${cur.pages} 页` : '';
+  updateSplitPreview();
 });
+
+// 与后端 pdftranslate/split.py 的 parse_ranges 保持一致
+function parseRangesSpec(spec, total) {
+  const out = [];
+  spec.replace(/，/g, ',').split(',').forEach((raw) => {
+    const part = raw.trim();
+    if (!part) return;
+    let start, end;
+    const m = /^(-?\d*)-(-?\d*)$/.exec(part);
+    if (m && (m[1] !== '' || m[2] !== '')) {
+      start = m[1] === '' ? 1 : parseInt(m[1], 10);
+      end = m[2] === '' ? total : parseInt(m[2], 10);
+    } else if (/^\d+$/.test(part)) {
+      start = end = parseInt(part, 10);
+    } else {
+      return; // 无效片段忽略
+    }
+    start = Math.max(1, start);
+    end = Math.min(total, end);
+    if (start > end) return;
+    out.push([start, end]);
+  });
+  out.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  out.forEach(([s, e]) => {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1] + 1) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  });
+  return merged;
+}
+
+function buildPlan(total, mode, every) {
+  if (mode === 'each') return Array.from({ length: total }, (_, i) => [i + 1, i + 1]);
+  if (mode === 'every') {
+    const step = Math.max(1, every || 1);
+    const plan = [];
+    for (let i = 1; i <= total; i += step) plan.push([i, Math.min(total, i + step - 1)]);
+    return plan;
+  }
+  return null; // ranges 由输入框决定
+}
+
+function pad(n) {
+  return String(n).padStart(3, '0');
+}
+
+function updateSplitPreview() {
+  const el = document.getElementById('splitPreview');
+  const files = window.__filesCache || [];
+  const cur = files.find((f) => f.path === document.getElementById('splitFile').value);
+  if (!cur) { el.textContent = ''; return; }
+  const total = cur.pages;
+
+  let plan;
+  if (splitMode === 'ranges') {
+    const spec = document.getElementById('splitRanges').value.trim();
+    if (!spec) {
+      el.innerHTML = '在上面填写页码范围，例如 <b>1-3,7,10-</b>';
+      return;
+    }
+    plan = parseRangesSpec(spec, total);
+    if (!plan.length) {
+      el.innerHTML = '<span style="color:var(--warn)">没有解析出有效页码，检查一下写法</span>';
+      return;
+    }
+  } else {
+    plan = buildPlan(total, splitMode, +document.getElementById('splitEvery').value);
+  }
+
+  const pages = plan.reduce((n, [s, e]) => n + (e - s + 1), 0);
+  const names = plan
+    .slice(0, 5)
+    .map(([s, e]) => (s === e ? `p${pad(s)}` : `p${pad(s)}-${pad(e)}`))
+    .join('、');
+  const more = plan.length > 5 ? ` …` : '';
+  el.innerHTML =
+    `将产出 <b style="color:var(--fg)">${plan.length}</b> 个文件，覆盖 <b style="color:var(--fg)">${pages}</b>/${total} 页：` +
+    `<span style="color:var(--dim)">${names}${more}</span>`;
+}
+
+['splitRanges', 'splitEvery'].forEach((id) =>
+  document.getElementById(id).addEventListener('input', updateSplitPreview),
+);
+document.getElementById('splitFile').addEventListener('change', updateSplitPreview);
 
 document.getElementById('btnSplit').onclick = async () => {
   const name = document.getElementById('splitFile').value;

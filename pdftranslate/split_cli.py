@@ -15,7 +15,22 @@ from .split import split_pdf
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog='pdftranslate.split', description='把多页 PDF 拆成多个小文件')
+    ap = argparse.ArgumentParser(
+        prog='pdftranslate.split',
+        description='把多页 PDF 拆成多个小文件',
+        epilog=(
+            '页码范围写法（用逗号分隔，每段产出一个文件）：' + chr(10) +
+            '  1-3        第 1 到 3 页合成一个文件' + chr(10) +
+            '  7          只取第 7 页，单独一个文件' + chr(10) +
+            '  10-        第 10 页一直到最后一页' + chr(10) +
+            '  -5         第 1 页到第 5 页' + chr(10) +
+            '  1-3,7,10-  产出 3 个文件：p001-003、p007、p010-末页' + chr(10) +
+            chr(10) +
+            '规则：超出页数自动裁剪；重叠或相邻范围合并（1-3,2-5 → 1-5）；' + chr(10) +
+            '      无法解析的片段忽略；中文逗号也认。' + chr(10)
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument('input', type=Path, help='输入 PDF（也可以是目录）')
     ap.add_argument('-o', '--out', type=Path, default=Path('out') / 'split', help='输出目录')
     mode = ap.add_mutually_exclusive_group()
