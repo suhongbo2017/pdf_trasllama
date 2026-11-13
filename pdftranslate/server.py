@@ -288,7 +288,7 @@ class Handler(BaseHTTPRequestHandler):
                     out_dir,
                     mode=mode,
                     every=int(payload.get('every') or 1),
-                    ranges=str(payload.get('ranges') or ''),
+                    cuts=str(payload.get('cuts') or payload.get('ranges') or ''),
                     make_zip=bool(payload.get('zip', True)),
                 )
             except Exception as exc:  # noqa: BLE001

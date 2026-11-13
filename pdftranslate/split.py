@@ -3,7 +3,7 @@
 三种模式：
   each    每页一个文件
   every   每 N 页一个文件
-  ranges  按自定义范围（如 1-3,7,10-12）
+  cuts    按切分点切开（如 1,3,7-9 表示在第 1、3、7、8、9 页之后各切一刀）
 
 只做 `insert_pdf` 页拷贝，不重新光栅化 —— 拆分后画质与原文件一致、体积也不会膨胀。
 """
@@ -26,48 +26,58 @@ class SplitResult:
     plan: list[tuple[int, int]]  # 每个输出文件对应的页范围（1-based，闭区间）
 
 
-def parse_ranges(spec: str, total: int) -> list[tuple[int, int]]:
-    """把 "1-3,7,10-" 解析成 [(1,3),(7,7),(10,total)]，越界自动裁剪。"""
-    out: list[tuple[int, int]] = []
-    for raw in spec.replace('，', ',').split(','):
+def parse_cuts(spec: str, total: int) -> list[int]:
+    """解析「切分点」：在这几页之后切开。
+
+    "1,3,7-9" 表示在第 1、3、7、8、9 页之后各切一刀。
+    范围会被展开成逐页（7-9 → 7,8,9），越界自动裁剪，无效片段忽略。
+    """
+    pts: set[int] = set()
+    for raw in spec.replace(chr(65292), ',').split(','):
         part = raw.strip()
         if not part:
             continue
+        m = re.fullmatch(r'(\d*)-(\d*)', part)
         try:
-            # 支持 1-3 / 7 / 10- / -5 四种写法
-            m = re.fullmatch(r'(\d*)-(\d*)', part)
             if m and (m.group(1) or m.group(2)):
                 start = int(m.group(1)) if m.group(1) else 1
                 end = int(m.group(2)) if m.group(2) else total
             elif part.isdigit():
                 start = end = int(part)
             else:
-                continue  # "abc" 这类无效片段直接忽略，不要因为一行手误整单失败
+                continue
         except ValueError:
             continue
+        for page in range(max(1, start), min(total, end) + 1):
+            pts.add(page)
+    return sorted(pts)
 
-        start = max(1, start)
-        end = min(total, end)
-        if start > end:
+
+def plan_from_cuts(cuts: list[int], total: int) -> list[tuple[int, int]]:
+    """按切分点生成每份文件的页范围（1-based 闭区间）。"""
+    plan: list[tuple[int, int]] = []
+    start = 1
+    for cut in cuts:
+        if cut < start:
             continue
-        out.append((start, end))
-    # 合并重叠/相邻，避免重复拆分同一页
-    out.sort()
-    merged: list[tuple[int, int]] = []
-    for s, e in out:
-        if merged and s <= merged[-1][1] + 1:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-        else:
-            merged.append((s, e))
-    return merged
+        plan.append((start, cut))
+        start = cut + 1
+    if start <= total:
+        plan.append((start, total))
+    return plan
 
 
-def build_plan(total: int, mode: str = 'each', every: int = 1, ranges: str = '') -> list[tuple[int, int]]:
-    if mode == 'ranges':
-        plan = parse_ranges(ranges, total)
-        if not plan:
-            raise ValueError('页码范围无效，示例：1-3,7,10-')
-        return plan
+def build_plan(
+    total: int,
+    mode: str = 'each',
+    every: int = 1,
+    cuts: str = '',
+) -> list[tuple[int, int]]:
+    if mode == 'cuts':
+        points = parse_cuts(cuts, total)
+        if not points:
+            raise ValueError('没有解析出有效切分页，示例：1,3,7-9')
+        return plan_from_cuts(points, total)
     if mode == 'every':
         step = max(1, int(every or 1))
         return [(i, min(total, i + step - 1)) for i in range(1, total + 1, step)]
@@ -87,7 +97,7 @@ def split_pdf(
     out_dir: Path,
     mode: str = 'each',
     every: int = 1,
-    ranges: str = '',
+    cuts: str = '',
     make_zip: bool = True,
 ) -> SplitResult:
     if not src.exists():
@@ -98,7 +108,7 @@ def split_pdf(
 
     with pymupdf.open(src) as doc:
         total = doc.page_count
-        plan = build_plan(total, mode=mode, every=every, ranges=ranges)
+        plan = build_plan(total, mode=mode, every=every, cuts=cuts)
 
         for start, end in plan:
             target = out_dir / _output_name(src.stem, start, end, start == end)

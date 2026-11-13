@@ -40,16 +40,17 @@ def main(argv: list[str] | None = None) -> int:
         prog='pdftranslate.split',
         description='把多页 PDF 拆成多个小文件',
         epilog=(
-            '页码范围写法（用逗号分隔，每段产出一个文件）：' + chr(10) +
-            '  1-3        第 1 到 3 页合成一个文件' + chr(10) +
-            '  7          只取第 7 页，单独一个文件' + chr(10) +
-            '  10-        第 10 页一直到最后一页' + chr(10) +
-            '  -5         第 1 页到第 5 页' + chr(10) +
-            '  1-3,7,10-  产出 3 个文件：p001-003、p007、p010-末页' + chr(10) +
-            '  （以 - 开头时也可写 --ranges=-5）' + chr(10) +
+            '切分页写法：填的页 = 在这一页之后切开（逗号分隔）。' + chr(10) +
             chr(10) +
-            '规则：超出页数自动裁剪；重叠或相邻范围合并（1-3,2-5 → 1-5）；' + chr(10) +
-            '      无法解析的片段忽略；中文逗号也认。' + chr(10)
+            '  10 页文件填 1,3,7-9 → 切成 6 份：' + chr(10) +
+            '    第 1 页 | 第 2-3 页 | 第 4-7 页 | 第 8 页 | 第 9 页 | 第 10 页' + chr(10) +
+            chr(10) +
+            '  1,3     第 1 页、第 3 页之后各切一刀  → 1 | 2-3 | 4-末页' + chr(10) +
+            '  5       只在第 5 页之后切一刀        → 1-5 | 6-末页' + chr(10) +
+            '  7-9     第 7、8、9 页之后各切一刀    → 这三页各自成份' + chr(10) +
+            chr(10) +
+            '规则：范围展开成逐页；超出页数自动裁剪；中文逗号也认；' + chr(10) +
+            '      无法解析的片段忽略。' + chr(10)
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -58,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument('--each', action='store_true', help='每页一个文件（默认）')
     mode.add_argument('--every', type=int, metavar='N', help='每 N 页一个文件')
-    mode.add_argument('--ranges', metavar='SPEC', help='自定义范围，如 1-3,7,10-')
+    mode.add_argument('--cuts', metavar='SPEC', help='切分页：在这几页之后切开，如 1,3,7-9')
+    mode.add_argument('--ranges', metavar='SPEC', help='（旧名，等同于 --cuts）')
     ap.add_argument('--no-zip', action='store_true', help='不生成 zip 打包')
     args = ap.parse_args(_normalize_argv(list(argv if argv is not None else sys.argv[1:])))
 
@@ -71,12 +73,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f'没有找到 PDF：{args.input}', file=sys.stderr)
         return 1
 
+    cuts_spec = args.cuts or args.ranges or ''
     if args.every:
-        mode_name, every, ranges = 'every', args.every, ''
-    elif args.ranges:
-        mode_name, every, ranges = 'ranges', 1, args.ranges
+        mode_name, every, cuts_spec = 'every', args.every, ''
+    elif cuts_spec:
+        mode_name, every = 'cuts', 1
     else:
-        mode_name, every, ranges = 'each', 1, ''
+        mode_name, every = 'each', 1
 
     exit_code = 0
     for src in targets:
@@ -86,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.out / src.stem if len(targets) > 1 else args.out,
                 mode=mode_name,
                 every=every,
-                ranges=ranges,
+                cuts=cuts_spec,
                 make_zip=not args.no_zip,
             )
         except Exception as exc:  # noqa: BLE001

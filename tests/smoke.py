@@ -75,16 +75,26 @@ check('public() 不泄露 key', all('api_key' not in m.public() for m in entries
 check('能识别 key 是否存在', isinstance(entries[0].public().get('has_key'), bool))
 
 print('\n[6] PDF 拆分')
-from pdftranslate.split import build_plan, parse_ranges, split_pdf  # noqa: E402
+from pdftranslate.split import build_plan, parse_cuts, plan_from_cuts, split_pdf  # noqa: E402
 
-check('范围解析 1-3,7,10-', parse_ranges('1-3,7,10-', 12) == [(1, 3), (7, 7), (10, 12)])
-check('范围自动裁剪越界', parse_ranges('1-99', 5) == [(1, 5)])
-check('重叠范围合并', parse_ranges('1-3,2-5', 10) == [(1, 5)])
-check('非法范围被忽略', parse_ranges('abc,,x-y', 10) == [])
-check('中文逗号也认', parse_ranges('1-3，7', 10) == [(1, 3), (7, 7)])
-check('省略起始 -5', parse_ranges('-5', 10) == [(1, 5)])
-check('省略结束 10-', parse_ranges('10-', 12) == [(10, 12)])
-check('文档里的组合示例 1-3,7,10-', parse_ranges('1-3,7,10-', 12) == [(1, 3), (7, 7), (10, 12)])
+# 切分点语义：填的页 = 在这一页之后切开
+check('切分点展开 1,3,7-9', parse_cuts('1,3,7-9', 10) == [1, 3, 7, 8, 9])
+check('中文逗号', parse_cuts('1,3，7', 10) == [1, 3, 7])
+check('单页越界直接丢弃', parse_cuts('1,99', 10) == [1])
+check('范围越界裁剪到末页', parse_cuts('7-99', 10) == [7, 8, 9, 10])
+check('非法片段忽略', parse_cuts('abc,,x-y', 10) == [])
+check('省略起始 -5', parse_cuts('-5', 10) == [1, 2, 3, 4, 5])
+check('省略结束 8-', parse_cuts('8-', 10) == [8, 9, 10])
+
+# 需求文档里的例子：10 页 + 1,3,7-9 → 6 份
+check(
+    '示例 1,3,7-9 切出 6 份',
+    plan_from_cuts(parse_cuts('1,3,7-9', 10), 10)
+    == [(1, 1), (2, 3), (4, 7), (8, 8), (9, 9), (10, 10)],
+)
+check('单点切一刀 5', plan_from_cuts(parse_cuts('5', 10), 10) == [(1, 5), (6, 10)])
+check('不切则整份', plan_from_cuts([], 10) == [(1, 10)])
+check('切在末页不产生空文件', plan_from_cuts(parse_cuts('10', 10), 10) == [(1, 10)][:1] + [])
 check('每页一个 plan', build_plan(4, mode='each') == [(1, 1), (2, 2), (3, 3), (4, 4)])
 check('每 N 页 plan', build_plan(7, mode='every', every=3) == [(1, 3), (4, 6), (7, 7)])
 
