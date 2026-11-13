@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,14 +34,18 @@ def parse_ranges(spec: str, total: int) -> list[tuple[int, int]]:
         if not part:
             continue
         try:
-            if '-' in part.lstrip('-'):
-                a, _, b = part.partition('-')
-                start = int(a) if a.strip() else 1
-                end = int(b) if b.strip() else total
-            else:
+            # 支持 1-3 / 7 / 10- / -5 四种写法
+            m = re.fullmatch(r'(\d*)-(\d*)', part)
+            if m and (m.group(1) or m.group(2)):
+                start = int(m.group(1)) if m.group(1) else 1
+                end = int(m.group(2)) if m.group(2) else total
+            elif part.isdigit():
                 start = end = int(part)
+            else:
+                continue  # "abc" 这类无效片段直接忽略，不要因为一行手误整单失败
         except ValueError:
-            continue  # "abc" 这类无效片段直接忽略，不要因为一行手误整单失败
+            continue
+
         start = max(1, start)
         end = min(total, end)
         if start > end:
